@@ -16,14 +16,18 @@ jobs:
         working-directory: starter/frontend
 
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '16'
-      - run: npm ci
+          cache: 'npm'
+          cache-dependency-path: starter/frontend/package-lock.json
 
-      - name: Auto-fix lint issues
-        run: npm run lint -- --fix
+      - name: Install dependencies
+        run: npm ci
 
       - name: Run lint
         run: npm run lint
@@ -35,12 +39,21 @@ jobs:
         working-directory: starter/frontend
 
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '16'
-      - run: npm ci
-      - run: CI=true npm test
+          cache: 'npm'
+          cache-dependency-path: starter/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: CI=true npm test
 
   build:
     runs-on: ubuntu-latest
@@ -50,27 +63,29 @@ jobs:
         working-directory: starter/frontend
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Configure AWS
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Login to ECR
-        uses: aws-actions/amazon-ecr-login@v1
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push Docker image
         env:
           ECR_REPO: ${{ secrets.FRONTEND_ECR_REPO }}
           IMAGE_TAG: ${{ github.sha }}
+          REACT_APP_MOVIE_API_URL: ${{ secrets.REACT_APP_MOVIE_API_URL }}
         run: |
+          echo "Using ECR repo: $ECR_REPO"
           docker build \
-            --build-arg REACT_APP_MOVIE_API_URL=http://aa0af137f75db42e98f07144ff70148d-1013511560.us-east-1.elb.amazonaws.com \
+            --build-arg REACT_APP_MOVIE_API_URL=$REACT_APP_MOVIE_API_URL \
             -t $ECR_REPO:$IMAGE_TAG .
-
           docker push $ECR_REPO:$IMAGE_TAG
 
   deploy:
@@ -81,18 +96,24 @@ jobs:
         working-directory: starter/frontend/k8s
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Configure AWS
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup kustomize
+        uses: imranismail/setup-kustomize@v2
+
       - name: Update kubeconfig
-        run: |
-          aws eks update-kubeconfig --region $AWS_REGION --name cluster
+        run: aws eks update-kubeconfig --region ${{ secrets.AWS_REGION }} --name ${{ secrets.EKS_CLUSTER_NAME }}
 
       - name: Deploy to EKS
         env:
@@ -100,4 +121,4 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           kustomize edit set image frontend=$ECR_REPO:$IMAGE_TAG
-          kustomize build | kubectl apply -f -
+          kustomize build . | kubectl apply -f -
